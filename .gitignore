@@ -1,0 +1,29 @@
+# Quartus Prime build outputs
+output_files/
+db/
+incremental_db/
+simulation/
+sim/
+
+# Quartus workspace (auto-regenerated)
+*.qws
+
+# Reports and logs
+*.rpt
+*.summary
+*.smsg
+*.qmsg
+*.qar
+*.qarlog
+
+# POF/SOF (generated bitstreams - too large)
+*.sof
+*.pof
+*.jic
+*.rbf
+
+# Backup files
+*~
+*.bak
+*.orig
+.claude/

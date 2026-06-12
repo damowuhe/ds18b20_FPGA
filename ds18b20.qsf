@@ -1,0 +1,139 @@
+# -------------------------------------------------------------------------- #
+#
+# Quartus Prime
+# Settings File
+#
+# Date: 2026/06/12
+# Board: AWC_C4MB_V11
+# Device: EP4CE6F17C8N (Cyclone IV E)
+# Project: DS18B20 Temperature Sensor + 6-Digit 7-Segment Display
+#
+# -------------------------------------------------------------------------- #
+
+set_global_assignment -name FAMILY "Cyclone IV E"
+set_global_assignment -name DEVICE EP4CE6F17C8
+set_global_assignment -name TOP_LEVEL_ENTITY ds18b20
+set_global_assignment -name ORIGINAL_QUARTUS_VERSION 18.0
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+set_global_assignment -name VERILOG_FILE ds18b20.v
+
+set_global_assignment -name LAST_QUARTUS_VERSION "18.0.0 Standard Edition"
+
+# --------------------------------------------------------------------------
+# Dual-purpose pin: release nCEO (F16) for regular I/O
+# --------------------------------------------------------------------------
+set_global_assignment -name RESERVE_NCEO_AFTER_CONFIGURATION "USE AS REGULAR IO"
+set_global_assignment -name CYCLONEII_RESERVE_NCEO_AFTER_CONFIGURATION "USE AS REGULAR IO"
+
+# --------------------------------------------------------------------------
+# Pin Assignments (from awc_c4mb_v11.pdf schematic)
+#
+#   Clock:  CLK1, 50 MHz onboard oscillator
+#   Reset:  KEY1, active low
+#   DS18B20: DQ (1-Wire data), requires external 4.7kΩ pull-up to 3.3V
+#
+#   Segment Display (CS3061BH/S, 6-digit common-anode):
+#     SEL[5:0] - digit select (active low, PNP transistor S9012)
+#     DIG[7:0] - segment data  (active low, through 470R)
+#
+#   FPGA Bank mapping:
+#     SEL5 -> B1   (Bank 1)
+#     SEL4 -> A2   (Bank 8)     DIG7 -> A5   (Bank 8)
+#     SEL3 -> B3   (Bank 8)     DIG6 -> B8   (Bank 8)
+#     SEL2 -> A3   (Bank 8)     DIG5 -> A7   (Bank 8)
+#     SEL1 -> B4   (Bank 8)     DIG4 -> B6   (Bank 8)
+#     SEL0 -> A4   (Bank 8)     DIG3 -> B5   (Bank 8)
+#                                DIG2 -> A6   (Bank 8)
+#                                DIG1 -> A8   (Bank 8)
+#                                DIG0 -> B7   (Bank 8)
+#     dq   -> E6   (Bank 1)
+# --------------------------------------------------------------------------
+
+# Clock (50 MHz)
+set_location_assignment PIN_E1 -to clk
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to clk
+
+# Reset (KEY1, active low)
+set_location_assignment PIN_E15 -to rst_n
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to rst_n
+
+# DS18B20 1-Wire Data (DQ) — 双向, 需外接 4.7kΩ 上拉到 3.3V
+set_location_assignment PIN_E6 -to dq
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dq
+
+# Digit selects (SEL[5:0]) - active low
+set_location_assignment PIN_B1 -to sel[5]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sel[5]
+
+set_location_assignment PIN_A2 -to sel[4]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sel[4]
+
+set_location_assignment PIN_B3 -to sel[3]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sel[3]
+
+set_location_assignment PIN_A3 -to sel[2]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sel[2]
+
+set_location_assignment PIN_B4 -to sel[1]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sel[1]
+
+set_location_assignment PIN_A4 -to sel[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sel[0]
+
+# Segment data (DIG[7:0]) - active low
+set_location_assignment PIN_A5 -to dig[7]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[7]
+
+set_location_assignment PIN_B8 -to dig[6]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[6]
+
+set_location_assignment PIN_A7 -to dig[5]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[5]
+
+set_location_assignment PIN_B6 -to dig[4]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[4]
+
+set_location_assignment PIN_B5 -to dig[3]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[3]
+
+set_location_assignment PIN_A6 -to dig[2]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[2]
+
+set_location_assignment PIN_A8 -to dig[1]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[1]
+
+set_location_assignment PIN_B7 -to dig[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dig[0]
+
+# --------------------------------------------------------------------------
+# General settings
+# --------------------------------------------------------------------------
+set_global_assignment -name PARTITION_NETLIST_TYPE SOURCE -section_id Top
+set_global_assignment -name PARTITION_FITTER_PRESERVATION_LEVEL PLACEMENT_AND_ROUTING -section_id Top
+set_global_assignment -name PARTITION_COLOR 16764057 -section_id Top
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 85
+set_global_assignment -name POWER_PRESET_COOLING_SOLUTION "23 MM HEAT SINK WITH 200 LFPM AIRFLOW"
+set_global_assignment -name POWER_BOARD_THERMAL_MODEL "NONE (CONSERVATIVE)"
+set_global_assignment -name EDA_SIMULATION_TOOL "ModelSim (Verilog)"
+set_global_assignment -name EDA_TIME_SCALE "1 ns" -section_id eda_simulation
+set_global_assignment -name EDA_OUTPUT_DATA_FORMAT "VERILOG HDL" -section_id eda_simulation
+set_global_assignment -name EDA_TEST_BENCH_ENABLE_STATUS TEST_BENCH_MODE -section_id eda_simulation
+set_global_assignment -name EDA_NATIVELINK_SIMULATION_TEST_BENCH ds18b20_tb -section_id eda_simulation
+set_global_assignment -name EDA_TEST_BENCH_NAME ds18b20_tb -section_id eda_simulation
+set_global_assignment -name EDA_DESIGN_INSTANCE_NAME NA -section_id ds18b20_tb
+set_global_assignment -name EDA_TEST_BENCH_RUN_SIM_FOR "10 s" -section_id ds18b20_tb
+set_global_assignment -name EDA_TEST_BENCH_MODULE_NAME ds18b20_tb -section_id ds18b20_tb
+set_global_assignment -name EDA_TEST_BENCH_FILE ds18b20_tb.v -section_id ds18b20_tb
+set_global_assignment -name ENABLE_OCT_DONE OFF
+set_global_assignment -name ENABLE_CONFIGURATION_PINS OFF
+set_global_assignment -name ENABLE_BOOT_SEL_PIN OFF
+set_global_assignment -name USE_CONFIGURATION_DEVICE OFF
+set_global_assignment -name CRC_ERROR_OPEN_DRAIN OFF
+set_global_assignment -name OUTPUT_IO_TIMING_NEAR_END_VMEAS "HALF VCCIO" -rise
+set_global_assignment -name OUTPUT_IO_TIMING_NEAR_END_VMEAS "HALF VCCIO" -fall
+set_global_assignment -name OUTPUT_IO_TIMING_FAR_END_VMEAS "HALF SIGNAL SWING" -rise
+set_global_assignment -name OUTPUT_IO_TIMING_FAR_END_VMEAS "HALF SIGNAL SWING" -fall
+
+
+set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top

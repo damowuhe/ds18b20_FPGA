@@ -1,0 +1,13 @@
+# -------------------------------------------------------------------------- #
+#
+# Quartus Prime
+# Project File
+#
+# Date: 2026/06/12
+# Project: DS18B20 Temperature Sensor + 6-Digit 7-Segment Display
+#
+# -------------------------------------------------------------------------- #
+
+QUARTUS_VERSION = "18.0"
+DATE = "16:00:00  June 12, 2026"
+PROJECT_REVISION = "ds18b20"
