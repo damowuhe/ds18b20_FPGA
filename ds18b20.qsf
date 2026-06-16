@@ -57,9 +57,17 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to clk
 set_location_assignment PIN_E15 -to rst_n
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to rst_n
 
+# KEY5 — 低电平按键, 外接上拉到 3.3V
+set_location_assignment PIN_F8 -to key5
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to key5
+
 # DS18B20 1-Wire Data (DQ) — 双向, 需外接 4.7kΩ 上拉到 3.3V
 set_location_assignment PIN_E6 -to dq
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dq
+
+# Buzzer (J1, 无源蜂鸣器 PWM 驱动)
+set_location_assignment PIN_J1 -to buzzer
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to buzzer
 
 # Digit selects (SEL[5:0]) - active low
 set_location_assignment PIN_B1 -to sel[5]

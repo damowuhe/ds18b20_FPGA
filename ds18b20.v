@@ -30,7 +30,9 @@ module ds18b20 (
     input  wire        rst_n,        // 低电平复位 (KEY1)
     output wire  [5:0] sel,          // 数码管位选 (低有效)
     output wire  [7:0] dig,          // 数码管段选 (低有效)
-    inout  wire        dq            // DS18B20 1-Wire 数据线
+    inout  wire        dq,           // DS18B20 1-Wire 数据线
+    output wire        buzzer,       // 无源蜂鸣器 PWM 驱动 (J1)
+    input  wire        key5          // 低电平按键 (KEY5, PIN_F8)
 );
 
 // ==========================================================================
@@ -50,6 +52,12 @@ localparam [20:0] T_RECOV     = 21'd5;       // 位间恢复
 localparam [20:0] T_750MS     = 21'd750_000; // 转换等待 750ms
 localparam [20:0] T_INIT      = 21'd100;     // 上电稳定
 localparam [20:0] T_RESTART   = 21'd2000;    // 循环间隔
+
+	// ---- 蜂鸣器报警阈值 ----
+	localparam [11:0] ALARM_HIGH  = 12'd330;     // 高温阈值: 33.0°C (x10)
+	localparam [11:0] ALARM_LOW   = 12'd270;     // 低温阈值: 27.0°C (x10)
+	localparam [14:0] BUZZER_DIV  = 15'd20000;   // PWM 基准
+	localparam [14:0] BUZZER_HALF = 15'd10000;   // 50% 占空比
 
 // ---- DS18B20 命令 ----
 localparam [7:0] CMD_SKIP_ROM  = 8'hCC;      // 0xCC = 11001100
@@ -136,6 +144,20 @@ wire [2:0]  active_digit;
 reg  [5:0]  sel_reg;
 reg  [7:0]  dig_reg;
 
+	// ---- 蜂鸣器 PWM ----
+	reg  [16:0] buzzer_cnt;
+	reg         buzzer_reg;
+	wire        alarm_on;
+	reg  [8:0]  melody_step;
+	reg  [11:0] melody_timer;
+
+	// ---- KEY5 消抖 & 静音切换 ----
+	reg         key5_sync;
+	reg         key5_stable;
+	reg         key5_prev;
+	reg  [13:0] key5_db_cnt;
+	reg         buzzer_muted;
+
 // ==========================================================================
 // 3. 引脚连接
 // ==========================================================================
@@ -143,6 +165,7 @@ assign dq    = dq_oe ? dq_out : 1'bz;
 assign dq_in = dq;
 assign sel   = sel_reg;
 assign dig   = dig_reg;
+	assign buzzer = buzzer_reg;
 assign timer_done = (timer == 21'd0);
 
 // ==========================================================================
@@ -512,7 +535,639 @@ always @(posedge clk or negedge rst_n) begin
 end
 
 // ==========================================================================
-// 6. 数码管动态扫描显示
+
+// ==========================================================================
+// 6. 蜂鸣器报警 + 《晴天》旋律
+// ==========================================================================
+
+// ---- KEY5 消抖 & 切换静音 ----
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        key5_sync    <= 1'b1;
+        key5_stable  <= 1'b1;
+        key5_prev    <= 1'b1;
+        key5_db_cnt  <= 14'd0;
+        buzzer_muted <= 1'b0;
+    end else if (us_tick) begin
+        key5_sync <= key5;
+        if (key5_sync != key5_stable) begin
+            if (key5_db_cnt == 14'd10000) begin
+                key5_stable <= key5_sync;
+                key5_db_cnt <= 14'd0;
+            end else begin
+                key5_db_cnt <= key5_db_cnt + 14'd1;
+            end
+        end else begin
+            key5_db_cnt <= 14'd0;
+        end
+        key5_prev <= key5_stable;
+        if (key5_stable == 1'b0 && key5_prev == 1'b1)
+            buzzer_muted <= ~buzzer_muted;
+    end
+end
+
+assign alarm_on = !buzzer_muted && sensor_ok && ((temp_tenths > ALARM_HIGH) || (temp_tenths < ALARM_LOW));
+
+// ---- 毫秒节拍 ----
+reg  [9:0] ms_cnt;
+wire       ms_tick;
+
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+        ms_cnt <= 10'd0;
+    else if (us_tick) begin
+        if (ms_cnt == 10'd999)
+            ms_cnt <= 10'd0;
+        else
+            ms_cnt <= ms_cnt + 10'd1;
+    end
+end
+
+assign ms_tick = (ms_cnt == 10'd999) && us_tick;
+
+// ---- 音符半周期查找 ----
+reg [16:0] melody_note;
+always @(*) begin
+    case (melody_step)
+        0: melody_note = 17'd42550;
+        1: melody_note = 17'd42550;
+        2: melody_note = 17'd63750;
+        3: melody_note = 17'd63750;
+        4: melody_note = 17'd56800;
+        5: melody_note = 17'd50600;
+        6: melody_note = 17'd0;
+        7: melody_note = 17'd42550;
+        8: melody_note = 17'd42550;
+        9: melody_note = 17'd63750;
+        10: melody_note = 17'd63750;
+        11: melody_note = 17'd56800;
+        12: melody_note = 17'd50600;
+        13: melody_note = 17'd56800;
+        14: melody_note = 17'd63750;
+        15: melody_note = 17'd85125;
+        16: melody_note = 17'd0;
+        17: melody_note = 17'd42550;
+        18: melody_note = 17'd42550;
+        19: melody_note = 17'd63750;
+        20: melody_note = 17'd63750;
+        21: melody_note = 17'd56800;
+        22: melody_note = 17'd50600;
+        23: melody_note = 17'd0;
+        24: melody_note = 17'd50600;
+        25: melody_note = 17'd56800;
+        26: melody_note = 17'd50600;
+        27: melody_note = 17'd47775;
+        28: melody_note = 17'd50600;
+        29: melody_note = 17'd56800;
+        30: melody_note = 17'd47775;
+        31: melody_note = 17'd50600;
+        32: melody_note = 17'd56800;
+        33: melody_note = 17'd63750;
+        34: melody_note = 17'd85125;
+        35: melody_note = 17'd63750;
+        36: melody_note = 17'd63750;
+        37: melody_note = 17'd50600;
+        38: melody_note = 17'd47775;
+        39: melody_note = 17'd50600;
+        40: melody_note = 17'd56800;
+        41: melody_note = 17'd63750;
+        42: melody_note = 17'd56800;
+        43: melody_note = 17'd50600;
+        44: melody_note = 17'd50600;
+        45: melody_note = 17'd50600;
+        46: melody_note = 17'd50600;
+        47: melody_note = 17'd56800;
+        48: melody_note = 17'd50600;
+        49: melody_note = 17'd56800;
+        50: melody_note = 17'd63750;
+        51: melody_note = 17'd85125;
+        52: melody_note = 17'd63750;
+        53: melody_note = 17'd63750;
+        54: melody_note = 17'd50600;
+        55: melody_note = 17'd47775;
+        56: melody_note = 17'd50600;
+        57: melody_note = 17'd56800;
+        58: melody_note = 17'd63750;
+        59: melody_note = 17'd56800;
+        60: melody_note = 17'd50600;
+        61: melody_note = 17'd50600;
+        62: melody_note = 17'd50600;
+        63: melody_note = 17'd50600;
+        64: melody_note = 17'd56800;
+        65: melody_note = 17'd50600;
+        66: melody_note = 17'd56800;
+        67: melody_note = 17'd63750;
+        68: melody_note = 17'd67550;
+        69: melody_note = 17'd63750;
+        70: melody_note = 17'd63750;
+        71: melody_note = 17'd63750;
+        72: melody_note = 17'd63750;
+        73: melody_note = 17'd67550;
+        74: melody_note = 17'd63750;
+        75: melody_note = 17'd63750;
+        76: melody_note = 17'd63750;
+        77: melody_note = 17'd63750;
+        78: melody_note = 17'd63750;
+        79: melody_note = 17'd63750;
+        80: melody_note = 17'd67550;
+        81: melody_note = 17'd63750;
+        82: melody_note = 17'd63750;
+        83: melody_note = 17'd63750;
+        84: melody_note = 17'd63750;
+        85: melody_note = 17'd63750;
+        86: melody_note = 17'd63750;
+        87: melody_note = 17'd67550;
+        88: melody_note = 17'd63750;
+        89: melody_note = 17'd63750;
+        90: melody_note = 17'd63750;
+        91: melody_note = 17'd63750;
+        92: melody_note = 17'd63750;
+        93: melody_note = 17'd63750;
+        94: melody_note = 17'd42550;
+        95: melody_note = 17'd42550;
+        96: melody_note = 17'd42550;
+        97: melody_note = 17'd0;
+        98: melody_note = 17'd42550;
+        99: melody_note = 17'd42550;
+        100: melody_note = 17'd42550;
+        101: melody_note = 17'd42550;
+        102: melody_note = 17'd42550;
+        103: melody_note = 17'd42550;
+        104: melody_note = 17'd42550;
+        105: melody_note = 17'd42550;
+        106: melody_note = 17'd42550;
+        107: melody_note = 17'd42550;
+        108: melody_note = 17'd42550;
+        109: melody_note = 17'd47775;
+        110: melody_note = 17'd50600;
+        111: melody_note = 17'd50600;
+        112: melody_note = 17'd50600;
+        113: melody_note = 17'd0;
+        114: melody_note = 17'd63750;
+        115: melody_note = 17'd63750;
+        116: melody_note = 17'd63750;
+        117: melody_note = 17'd63750;
+        118: melody_note = 17'd75825;
+        119: melody_note = 17'd67550;
+        120: melody_note = 17'd63750;
+        121: melody_note = 17'd42550;
+        122: melody_note = 17'd47775;
+        123: melody_note = 17'd50600;
+        124: melody_note = 17'd63750;
+        125: melody_note = 17'd63750;
+        126: melody_note = 17'd63750;
+        127: melody_note = 17'd0;
+        128: melody_note = 17'd63750;
+        129: melody_note = 17'd63750;
+        130: melody_note = 17'd63750;
+        131: melody_note = 17'd63750;
+        132: melody_note = 17'd50600;
+        133: melody_note = 17'd63750;
+        134: melody_note = 17'd75825;
+        135: melody_note = 17'd67550;
+        136: melody_note = 17'd63750;
+        137: melody_note = 17'd42550;
+        138: melody_note = 17'd47775;
+        139: melody_note = 17'd50600;
+        140: melody_note = 17'd63750;
+        141: melody_note = 17'd56800;
+        142: melody_note = 17'd56800;
+        143: melody_note = 17'd0;
+        144: melody_note = 17'd0;
+        145: melody_note = 17'd50600;
+        146: melody_note = 17'd56800;
+        147: melody_note = 17'd47775;
+        148: melody_note = 17'd50600;
+        149: melody_note = 17'd50600;
+        150: melody_note = 17'd63750;
+        151: melody_note = 17'd42550;
+        152: melody_note = 17'd33750;
+        153: melody_note = 17'd31875;
+        154: melody_note = 17'd33750;
+        155: melody_note = 17'd42550;
+        156: melody_note = 17'd63750;
+        157: melody_note = 17'd63750;
+        158: melody_note = 17'd63750;
+        159: melody_note = 17'd37900;
+        160: melody_note = 17'd37900;
+        161: melody_note = 17'd0;
+        162: melody_note = 17'd37900;
+        163: melody_note = 17'd42550;
+        164: melody_note = 17'd42550;
+        165: melody_note = 17'd42550;
+        166: melody_note = 17'd42550;
+        167: melody_note = 17'd47775;
+        168: melody_note = 17'd50600;
+        169: melody_note = 17'd56800;
+        170: melody_note = 17'd50600;
+        171: melody_note = 17'd47775;
+        172: melody_note = 17'd50600;
+        173: melody_note = 17'd50600;
+        174: melody_note = 17'd50600;
+        175: melody_note = 17'd45075;
+        176: melody_note = 17'd40175;
+        177: melody_note = 17'd50600;
+        178: melody_note = 17'd50600;
+        179: melody_note = 17'd45075;
+        180: melody_note = 17'd40175;
+        181: melody_note = 17'd33750;
+        182: melody_note = 17'd28375;
+        183: melody_note = 17'd33750;
+        184: melody_note = 17'd31875;
+        185: melody_note = 17'd31875;
+        186: melody_note = 17'd31875;
+        187: melody_note = 17'd0;
+        188: melody_note = 17'd31875;
+        189: melody_note = 17'd31875;
+        190: melody_note = 17'd42550;
+        191: melody_note = 17'd42550;
+        192: melody_note = 17'd37900;
+        193: melody_note = 17'd42550;
+        194: melody_note = 17'd47775;
+        195: melody_note = 17'd56800;
+        196: melody_note = 17'd50600;
+        197: melody_note = 17'd47775;
+        198: melody_note = 17'd42550;
+        199: melody_note = 17'd37900;
+        200: melody_note = 17'd63750;
+        201: melody_note = 17'd37900;
+        202: melody_note = 17'd33750;
+        203: melody_note = 17'd33750;
+        204: melody_note = 17'd50600;
+        205: melody_note = 17'd56800;
+        206: melody_note = 17'd47775;
+        207: melody_note = 17'd50600;
+        208: melody_note = 17'd50600;
+        209: melody_note = 17'd63750;
+        210: melody_note = 17'd42550;
+        211: melody_note = 17'd33750;
+        212: melody_note = 17'd31875;
+        213: melody_note = 17'd33750;
+        214: melody_note = 17'd42550;
+        215: melody_note = 17'd63750;
+        216: melody_note = 17'd63750;
+        217: melody_note = 17'd63750;
+        218: melody_note = 17'd37900;
+        219: melody_note = 17'd37900;
+        220: melody_note = 17'd0;
+        221: melody_note = 17'd37900;
+        222: melody_note = 17'd42550;
+        223: melody_note = 17'd42550;
+        224: melody_note = 17'd42550;
+        225: melody_note = 17'd42550;
+        226: melody_note = 17'd47775;
+        227: melody_note = 17'd50600;
+        228: melody_note = 17'd56800;
+        229: melody_note = 17'd50600;
+        230: melody_note = 17'd47775;
+        231: melody_note = 17'd50600;
+        232: melody_note = 17'd50600;
+        233: melody_note = 17'd50600;
+        234: melody_note = 17'd45075;
+        235: melody_note = 17'd40175;
+        236: melody_note = 17'd50600;
+        237: melody_note = 17'd50600;
+        238: melody_note = 17'd45075;
+        239: melody_note = 17'd40175;
+        240: melody_note = 17'd33750;
+        241: melody_note = 17'd28375;
+        242: melody_note = 17'd33750;
+        243: melody_note = 17'd31875;
+        244: melody_note = 17'd31875;
+        245: melody_note = 17'd31875;
+        246: melody_note = 17'd0;
+        247: melody_note = 17'd31875;
+        248: melody_note = 17'd31875;
+        249: melody_note = 17'd42550;
+        250: melody_note = 17'd42550;
+        251: melody_note = 17'd37900;
+        252: melody_note = 17'd42550;
+        253: melody_note = 17'd47775;
+        254: melody_note = 17'd75825;
+        255: melody_note = 17'd67550;
+        256: melody_note = 17'd63750;
+        257: melody_note = 17'd56800;
+        258: melody_note = 17'd50600;
+        259: melody_note = 17'd56800;
+        260: melody_note = 17'd56800;
+        261: melody_note = 17'd50600;
+        262: melody_note = 17'd63750;
+        263: melody_note = 17'd63750;
+        264: melody_note = 17'd0;
+        default: melody_note = 17'd0;
+    endcase
+end
+
+// ---- 音符时长查找 ----
+reg [11:0] melody_dura;
+always @(*) begin
+    case (melody_step)
+        0: melody_dura = 12'd500;
+        1: melody_dura = 12'd500;
+        2: melody_dura = 12'd1000;
+        3: melody_dura = 12'd500;
+        4: melody_dura = 12'd500;
+        5: melody_dura = 12'd500;
+        6: melody_dura = 12'd500;
+        7: melody_dura = 12'd500;
+        8: melody_dura = 12'd500;
+        9: melody_dura = 12'd500;
+        10: melody_dura = 12'd250;
+        11: melody_dura = 12'd250;
+        12: melody_dura = 12'd250;
+        13: melody_dura = 12'd250;
+        14: melody_dura = 12'd500;
+        15: melody_dura = 12'd500;
+        16: melody_dura = 12'd500;
+        17: melody_dura = 12'd500;
+        18: melody_dura = 12'd500;
+        19: melody_dura = 12'd1000;
+        20: melody_dura = 12'd500;
+        21: melody_dura = 12'd500;
+        22: melody_dura = 12'd500;
+        23: melody_dura = 12'd1000;
+        24: melody_dura = 12'd250;
+        25: melody_dura = 12'd250;
+        26: melody_dura = 12'd250;
+        27: melody_dura = 12'd250;
+        28: melody_dura = 12'd250;
+        29: melody_dura = 12'd250;
+        30: melody_dura = 12'd250;
+        31: melody_dura = 12'd250;
+        32: melody_dura = 12'd500;
+        33: melody_dura = 12'd500;
+        34: melody_dura = 12'd500;
+        35: melody_dura = 12'd500;
+        36: melody_dura = 12'd500;
+        37: melody_dura = 12'd500;
+        38: melody_dura = 12'd500;
+        39: melody_dura = 12'd500;
+        40: melody_dura = 12'd250;
+        41: melody_dura = 12'd250;
+        42: melody_dura = 12'd500;
+        43: melody_dura = 12'd500;
+        44: melody_dura = 12'd500;
+        45: melody_dura = 12'd500;
+        46: melody_dura = 12'd250;
+        47: melody_dura = 12'd250;
+        48: melody_dura = 12'd500;
+        49: melody_dura = 12'd1000;
+        50: melody_dura = 12'd500;
+        51: melody_dura = 12'd500;
+        52: melody_dura = 12'd500;
+        53: melody_dura = 12'd500;
+        54: melody_dura = 12'd500;
+        55: melody_dura = 12'd500;
+        56: melody_dura = 12'd500;
+        57: melody_dura = 12'd250;
+        58: melody_dura = 12'd250;
+        59: melody_dura = 12'd500;
+        60: melody_dura = 12'd500;
+        61: melody_dura = 12'd500;
+        62: melody_dura = 12'd500;
+        63: melody_dura = 12'd250;
+        64: melody_dura = 12'd250;
+        65: melody_dura = 12'd500;
+        66: melody_dura = 12'd750;
+        67: melody_dura = 12'd250;
+        68: melody_dura = 12'd250;
+        69: melody_dura = 12'd250;
+        70: melody_dura = 12'd250;
+        71: melody_dura = 12'd250;
+        72: melody_dura = 12'd250;
+        73: melody_dura = 12'd500;
+        74: melody_dura = 12'd250;
+        75: melody_dura = 12'd250;
+        76: melody_dura = 12'd250;
+        77: melody_dura = 12'd250;
+        78: melody_dura = 12'd250;
+        79: melody_dura = 12'd250;
+        80: melody_dura = 12'd500;
+        81: melody_dura = 12'd250;
+        82: melody_dura = 12'd250;
+        83: melody_dura = 12'd250;
+        84: melody_dura = 12'd250;
+        85: melody_dura = 12'd250;
+        86: melody_dura = 12'd250;
+        87: melody_dura = 12'd500;
+        88: melody_dura = 12'd250;
+        89: melody_dura = 12'd250;
+        90: melody_dura = 12'd250;
+        91: melody_dura = 12'd250;
+        92: melody_dura = 12'd250;
+        93: melody_dura = 12'd250;
+        94: melody_dura = 12'd500;
+        95: melody_dura = 12'd250;
+        96: melody_dura = 12'd250;
+        97: melody_dura = 12'd250;
+        98: melody_dura = 12'd250;
+        99: melody_dura = 12'd250;
+        100: melody_dura = 12'd500;
+        101: melody_dura = 12'd250;
+        102: melody_dura = 12'd250;
+        103: melody_dura = 12'd250;
+        104: melody_dura = 12'd250;
+        105: melody_dura = 12'd250;
+        106: melody_dura = 12'd250;
+        107: melody_dura = 12'd250;
+        108: melody_dura = 12'd250;
+        109: melody_dura = 12'd250;
+        110: melody_dura = 12'd2000;
+        111: melody_dura = 12'd1000;
+        112: melody_dura = 12'd250;
+        113: melody_dura = 12'd250;
+        114: melody_dura = 12'd250;
+        115: melody_dura = 12'd250;
+        116: melody_dura = 12'd500;
+        117: melody_dura = 12'd500;
+        118: melody_dura = 12'd500;
+        119: melody_dura = 12'd500;
+        120: melody_dura = 12'd500;
+        121: melody_dura = 12'd500;
+        122: melody_dura = 12'd500;
+        123: melody_dura = 12'd500;
+        124: melody_dura = 12'd1000;
+        125: melody_dura = 12'd1000;
+        126: melody_dura = 12'd250;
+        127: melody_dura = 12'd250;
+        128: melody_dura = 12'd250;
+        129: melody_dura = 12'd250;
+        130: melody_dura = 12'd500;
+        131: melody_dura = 12'd500;
+        132: melody_dura = 12'd500;
+        133: melody_dura = 12'd500;
+        134: melody_dura = 12'd500;
+        135: melody_dura = 12'd500;
+        136: melody_dura = 12'd500;
+        137: melody_dura = 12'd500;
+        138: melody_dura = 12'd500;
+        139: melody_dura = 12'd500;
+        140: melody_dura = 12'd2000;
+        141: melody_dura = 12'd1000;
+        142: melody_dura = 12'd1000;
+        143: melody_dura = 12'd500;
+        144: melody_dura = 12'd500;
+        145: melody_dura = 12'd500;
+        146: melody_dura = 12'd500;
+        147: melody_dura = 12'd500;
+        148: melody_dura = 12'd500;
+        149: melody_dura = 12'd500;
+        150: melody_dura = 12'd500;
+        151: melody_dura = 12'd500;
+        152: melody_dura = 12'd500;
+        153: melody_dura = 12'd500;
+        154: melody_dura = 12'd500;
+        155: melody_dura = 12'd500;
+        156: melody_dura = 12'd500;
+        157: melody_dura = 12'd500;
+        158: melody_dura = 12'd500;
+        159: melody_dura = 12'd500;
+        160: melody_dura = 12'd500;
+        161: melody_dura = 12'd500;
+        162: melody_dura = 12'd500;
+        163: melody_dura = 12'd500;
+        164: melody_dura = 12'd500;
+        165: melody_dura = 12'd500;
+        166: melody_dura = 12'd500;
+        167: melody_dura = 12'd500;
+        168: melody_dura = 12'd500;
+        169: melody_dura = 12'd500;
+        170: melody_dura = 12'd500;
+        171: melody_dura = 12'd2000;
+        172: melody_dura = 12'd500;
+        173: melody_dura = 12'd500;
+        174: melody_dura = 12'd500;
+        175: melody_dura = 12'd500;
+        176: melody_dura = 12'd500;
+        177: melody_dura = 12'd500;
+        178: melody_dura = 12'd500;
+        179: melody_dura = 12'd500;
+        180: melody_dura = 12'd500;
+        181: melody_dura = 12'd500;
+        182: melody_dura = 12'd500;
+        183: melody_dura = 12'd500;
+        184: melody_dura = 12'd1000;
+        185: melody_dura = 12'd500;
+        186: melody_dura = 12'd500;
+        187: melody_dura = 12'd500;
+        188: melody_dura = 12'd500;
+        189: melody_dura = 12'd500;
+        190: melody_dura = 12'd500;
+        191: melody_dura = 12'd500;
+        192: melody_dura = 12'd500;
+        193: melody_dura = 12'd500;
+        194: melody_dura = 12'd500;
+        195: melody_dura = 12'd500;
+        196: melody_dura = 12'd500;
+        197: melody_dura = 12'd500;
+        198: melody_dura = 12'd500;
+        199: melody_dura = 12'd750;
+        200: melody_dura = 12'd250;
+        201: melody_dura = 12'd1000;
+        202: melody_dura = 12'd500;
+        203: melody_dura = 12'd500;
+        204: melody_dura = 12'd500;
+        205: melody_dura = 12'd500;
+        206: melody_dura = 12'd500;
+        207: melody_dura = 12'd500;
+        208: melody_dura = 12'd500;
+        209: melody_dura = 12'd500;
+        210: melody_dura = 12'd500;
+        211: melody_dura = 12'd500;
+        212: melody_dura = 12'd500;
+        213: melody_dura = 12'd500;
+        214: melody_dura = 12'd500;
+        215: melody_dura = 12'd500;
+        216: melody_dura = 12'd500;
+        217: melody_dura = 12'd500;
+        218: melody_dura = 12'd500;
+        219: melody_dura = 12'd500;
+        220: melody_dura = 12'd500;
+        221: melody_dura = 12'd500;
+        222: melody_dura = 12'd500;
+        223: melody_dura = 12'd500;
+        224: melody_dura = 12'd500;
+        225: melody_dura = 12'd500;
+        226: melody_dura = 12'd500;
+        227: melody_dura = 12'd500;
+        228: melody_dura = 12'd500;
+        229: melody_dura = 12'd500;
+        230: melody_dura = 12'd2000;
+        231: melody_dura = 12'd500;
+        232: melody_dura = 12'd500;
+        233: melody_dura = 12'd500;
+        234: melody_dura = 12'd500;
+        235: melody_dura = 12'd500;
+        236: melody_dura = 12'd500;
+        237: melody_dura = 12'd500;
+        238: melody_dura = 12'd500;
+        239: melody_dura = 12'd500;
+        240: melody_dura = 12'd500;
+        241: melody_dura = 12'd500;
+        242: melody_dura = 12'd500;
+        243: melody_dura = 12'd1000;
+        244: melody_dura = 12'd500;
+        245: melody_dura = 12'd500;
+        246: melody_dura = 12'd500;
+        247: melody_dura = 12'd500;
+        248: melody_dura = 12'd500;
+        249: melody_dura = 12'd500;
+        250: melody_dura = 12'd500;
+        251: melody_dura = 12'd500;
+        252: melody_dura = 12'd500;
+        253: melody_dura = 12'd500;
+        254: melody_dura = 12'd500;
+        255: melody_dura = 12'd500;
+        256: melody_dura = 12'd500;
+        257: melody_dura = 12'd500;
+        258: melody_dura = 12'd1000;
+        259: melody_dura = 12'd500;
+        260: melody_dura = 12'd500;
+        261: melody_dura = 12'd1000;
+        262: melody_dura = 12'd3000;
+        default: melody_dura = 12'd500;
+    endcase
+end
+
+localparam MELODY_LEN = 265;
+
+// 蜂鸣器旋律 PWM 播放
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        buzzer_cnt   <= 17'd0;
+        buzzer_reg   <= 1'b0;
+        melody_step  <= 9'd0;
+        melody_timer <= 12'd0;
+    end else if (alarm_on) begin
+        if (ms_tick && melody_timer == melody_dura - 1) begin
+            melody_timer <= 12'd0;
+            buzzer_cnt   <= 17'd0;
+            if (melody_step == MELODY_LEN - 1)
+                melody_step <= 9'd0;
+            else
+                melody_step <= melody_step + 9'd1;
+        end else begin
+            if (ms_tick)
+                melody_timer <= melody_timer + 12'd1;
+            if (melody_note == 17'd0) begin
+                buzzer_cnt <= 17'd0;
+                buzzer_reg <= 1'b0;
+            end else if (buzzer_cnt >= melody_note - 1) begin
+                buzzer_cnt <= 17'd0;
+                buzzer_reg <= ~buzzer_reg;
+            end else begin
+                buzzer_cnt <= buzzer_cnt + 17'd1;
+            end
+        end
+    end else begin
+        buzzer_cnt   <= 17'd0;
+        buzzer_reg   <= 1'b0;
+        melody_step  <= 9'd0;
+        melody_timer <= 12'd0;
+    end
+end
+
+// 7. 数码管动态扫描显示
 // ==========================================================================
 
 // ---- 扫描计数器 (50M / 2^14 ≈ 3052 Hz) ----
