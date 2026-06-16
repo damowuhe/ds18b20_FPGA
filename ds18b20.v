@@ -1,6 +1,6 @@
 // ==========================================================================
 // ds18b20.v — DS18B20 数字温度传感器 + 6位共阳极数码管显示
-//            温度精确到小数点后1位，显示在最右边3位数码管
+//            温度精确到小数点后2位，显示在最右边4位数码管
 //
 // Board:   AWC_C4MB_V11
 // FPGA:    EP4CE6F17C8N (Cyclone IV E)
@@ -53,9 +53,12 @@ localparam [20:0] T_750MS     = 21'd750_000; // 转换等待 750ms
 localparam [20:0] T_INIT      = 21'd100;     // 上电稳定
 localparam [20:0] T_RESTART   = 21'd2000;    // 循环间隔
 
-	// ---- 蜂鸣器报警阈值 ----
-	localparam [11:0] ALARM_HIGH  = 12'd330;     // 高温阈值: 33.0°C (x10)
-	localparam [11:0] ALARM_LOW   = 12'd270;     // 低温阈值: 27.0°C (x10)
+	// ---- 蜂鸣器报警阈值 (改这里的整数即可!) ----
+	localparam [5:0] TEMP_HIGH_DEG = 6'd32;      // 高温报警: > 33°C → 响
+	localparam [5:0] TEMP_LOW_DEG  = 6'd31;      // 低温报警: < 27°C → 响
+	// 以下自动计算, 无需手动修改
+	localparam [13:0] ALARM_HIGH = TEMP_HIGH_DEG * 8'd100;
+	localparam [13:0] ALARM_LOW  = TEMP_LOW_DEG  * 8'd100;
 	localparam [14:0] BUZZER_DIV  = 15'd20000;   // PWM 基准
 	localparam [14:0] BUZZER_HALF = 15'd10000;   // 50% 占空比
 
@@ -131,12 +134,13 @@ reg  [7:0]  shift_reg;
 // ---- 温度数据 ----
 reg         sensor_ok;
 reg  [15:0] raw_temp;
-reg  [11:0] temp_tenths;
+reg  [13:0] temp_hundredths; // 温度×100
 
 // ---- BCD 显示位 ----
 reg  [3:0]  disp_hundreds;
 reg  [3:0]  disp_tens;
 reg  [3:0]  disp_ones;
+reg  [3:0]  disp_tenths; // 百分位
 
 // ---- 数码管扫描 ----
 reg  [13:0] scan_cnt;
@@ -195,7 +199,7 @@ always @(posedge clk or negedge rst_n) begin
         dq_oe       <= 1'b0;      // 高阻 (= 释放, 上拉电阻拉高)
         sensor_ok   <= 1'b0;
         raw_temp    <= 16'd0;
-        temp_tenths <= 12'd0;
+        temp_hundredths <= 14'd0;
         disp_hundreds <= 4'd0;
         disp_tens     <= 4'd0;
         disp_ones     <= 4'd0;
@@ -501,9 +505,9 @@ always @(posedge clk or negedge rst_n) begin
                     //   temp_tenths = (raw_temp * 10 + 8) / 16
                     //   12位有符号值, 此处仅处理正温度 (bit[11]=0)
                     if (sensor_ok) begin
-                        temp_tenths <= (({4'd0, raw_temp} * 12'd10 + 12'd8) >> 4);
+                        temp_hundredths <= (({4'd0, raw_temp} * 18'd100 + 18'd8) >> 4);
                     end else begin
-                        temp_tenths <= 12'd0;
+                        temp_hundredths <= 14'd0;
                     end
 
                     // BCD 分解 (temp_tenths = 温度 × 10):
@@ -511,9 +515,10 @@ always @(posedge clk or negedge rst_n) begin
                     //     disp_hundreds = 2  (整数十位)
                     //     disp_tens     = 5  (整数个位)
                     //     disp_ones     = 3  (小数十分位)
-                    disp_hundreds <= temp_tenths / 12'd100;
-                    disp_tens     <= (temp_tenths / 12'd10) % 12'd10;
-                    disp_ones     <= temp_tenths % 12'd10;
+                    disp_hundreds <= temp_hundredths / 14'd1000;
+                    disp_tens     <= (temp_hundredths / 14'd100) % 14'd10;
+                    disp_ones     <= (temp_hundredths / 14'd10) % 14'd10;
+                    disp_tenths   <= temp_hundredths % 14'd10;
 
                     // 重新开始下一轮温度读取
                     state   <= S_INIT;
@@ -566,7 +571,7 @@ always @(posedge clk or negedge rst_n) begin
     end
 end
 
-assign alarm_on = !buzzer_muted && sensor_ok && ((temp_tenths > ALARM_HIGH) || (temp_tenths < ALARM_LOW));
+assign alarm_on = !buzzer_muted && sensor_ok && ((temp_hundredths > ALARM_HIGH) || (temp_hundredths < ALARM_LOW));
 
 // ---- 毫秒节拍 ----
 reg  [9:0] ms_cnt;
@@ -1184,12 +1189,12 @@ assign active_digit = scan_cnt[13:11];    // 高3位: 0~5 循环
 // 物理排列: SEL[5]=最右, SEL[0]=最左
 always @(*) begin
     case (active_digit)
-        3'd5: sel_reg = 6'b011111;   // SEL[5] 最右位 (十分位)
-        3'd4: sel_reg = 6'b101111;   // SEL[4] 个位 (带小数点)
-        3'd3: sel_reg = 6'b110111;   // SEL[3] 十位
-        3'd2: sel_reg = 6'b111011;   // 空
-        3'd1: sel_reg = 6'b111101;   // 空
-        3'd0: sel_reg = 6'b111110;   // SEL[0] 最左位 (空)
+        3'd5: sel_reg = 6'b011111;   // SEL[5] 最右 (百分位)
+        3'd4: sel_reg = 6'b101111;   // SEL[4] 十分位
+        3'd3: sel_reg = 6'b110111;   // SEL[3] 个位 (带小数点)
+        3'd2: sel_reg = 6'b111011;   // SEL[2] 十位
+        3'd1: sel_reg = 6'b111101;   // SEL[1] 空
+        3'd0: sel_reg = 6'b111110;   // SEL[0] 空
         default: sel_reg = 6'b111111;
     endcase
 end
@@ -1221,35 +1226,43 @@ endfunction
 //           左3位(SEL0~2)   右3位(SEL3~5)
 always @(*) begin
     case (active_digit)
-        // ---- 位5 (最右, SEL[5]): 十分位 (小数位) ----
+        // ---- 位5 (SEL[5] 最右): 百分位 ----
         3'd5: begin
             if (sensor_ok)
-                dig_reg = seg_decode(disp_ones);
+                dig_reg = seg_decode(disp_tenths);
             else
                 dig_reg = seg_decode(4'd14);    // 无传感器显示 'E'
         end
 
-        // ---- 位4 (SEL[4]): 个位 (整数个位) + 小数点 ----
+        // ---- 位4 (SEL[4]): 十分位 ----
         3'd4: begin
+            if (sensor_ok)
+                dig_reg = seg_decode(disp_ones);
+            else
+                dig_reg = 8'b1111_1111;
+        end
+
+        // ---- 位3 (SEL[3]): 个位 + 小数点 ----
+        3'd3: begin
             if (sensor_ok)
                 dig_reg = seg_decode(disp_tens) & 8'b0111_1111;  // DP=0 亮
             else
                 dig_reg = seg_decode(4'd14) & 8'b0111_1111;
         end
 
-        // ---- 位3 (SEL[3]): 十位 (整数十位), 前导零消隐 ----
-        3'd3: begin
+        // ---- 位2 (SEL[2]): 十位, 前导零消隐 ----
+        3'd2: begin
             if (sensor_ok) begin
                 if (disp_hundreds == 4'd0)
                     dig_reg = 8'b1111_1111;     // 消隐
                 else
                     dig_reg = seg_decode(disp_hundreds);
             end else begin
-                dig_reg = 8'b1111_1111;         // 无传感器时灭
+                dig_reg = 8'b1111_1111;
             end
         end
 
-        // ---- 位0~2: 左侧3位 (SEL[0]~SEL[2]) 不显示 ----
+        // ---- 位0~1: 左侧2位不显示 ----
         default: begin
             dig_reg = 8'b1111_1111;
         end
